@@ -472,7 +472,7 @@ class dxfparse:
         sorted_polygons = []
 
         for slab_id in np.unique(cur_ele_slab_id):
-            sign = 1 if 'Slab' in slab_id else -1  # Negative for gaps
+            sign = 1 if 'Slab' in slab_id or 'SLAB' in slab_id else -1  # Negative for gaps
 
             polygon_map = np.where(cur_ele_slab_id == slab_id)
             polygon_x = cur_ele_slab_x[polygon_map]
@@ -831,7 +831,7 @@ class dxfparse:
             IConFramesIid = self.Frames['i_ID'][IConFrameMap]
             IConFramesJid = self.Frames['j_ID'][IConFrameMap]
             CSE_FrameID = IConFramesID[np.where((IConFramesIid == i_ID) &
-                                                (IConFramesDir == 3))]
+                                                (IConFramesDir == 3))[0][0]]
             iType = self.Points['Type'][Iidx]
             if iType == 'BCJ':
                 CSE_NodeID = int(float(f'1{i_ID}'))
@@ -846,7 +846,7 @@ class dxfparse:
             JConFramesIid = self.Frames['i_ID'][JConFrameMap]
             JConFramesJid = self.Frames['j_ID'][JConFrameMap]
             CNO_FrameID = JConFramesID[np.where((JConFramesJid == j_ID) &
-                                                (JConFramesDir == 3))]
+                                                (JConFramesDir == 3))[0][0]]
 
             jType = self.Points['Type'][Jidx]
             if jType == 'BCJ':
@@ -919,8 +919,8 @@ class dxfparse:
                     NType = DBV['Nodes']['Dir1'][NodeType][3]
                     RN = DBV['Nodes']['Dir1'][NodeType][4]
                     if NodeID in FramesNodeIDs:
-                        FIDMap = np.where(FramesNodeIDs == NodeID)
-                        ValsDummy[NodeType+'_Frame'] = int(FramesID[FIDMap])
+                        FIDMap = np.where(FramesNodeIDs == NodeID)[0]
+                        ValsDummy[NodeType+'_Frame'] = int(FramesID[FIDMap][0])
                         if NType == 'BCJ':
                             ValsDummy[NodeType+'_Node'] = int(float(f"6{RN}"))
                         else:
@@ -933,8 +933,8 @@ class dxfparse:
                     NType = DBV['Nodes']['Dir2'][NodeType][3]
                     RN = DBV['Nodes']['Dir2'][NodeType][4]
                     if NodeID in FramesNodeIDs:
-                        FIDMap = np.where(FramesNodeIDs == NodeID)
-                        ValsDummy[NodeType+'_Frame'] = int(FramesID[FIDMap])
+                        FIDMap = np.where(FramesNodeIDs == NodeID)[0]
+                        ValsDummy[NodeType+'_Frame'] = int(FramesID[FIDMap][0])
                         if NType == 'BCJ':
                             ValsDummy[NodeType+'_Node'] = int(float(f"6{RN}"))
                         else:
@@ -1286,11 +1286,14 @@ class dxfparse:
         BCCoords = np.array(list(set(zip(self.BoundConditions['X'],
                                          self.BoundConditions['Y'],
                                          self.BoundConditions['Z']))))
-        BCidx = np.where(np.isin(Points, BCCoords).sum(axis=1) == 3)
+        Points_view = Points.view([('', Points.dtype)] * 3)
+        BCCoords_view = BCCoords.view([('', BCCoords.dtype)] * 3)
+
+        BCidx = np.where(np.isin(Points_view, BCCoords_view))[0]
         BCs[BCidx, :] = 1
         self.Points = {'ID': np.array(IDs),
                        'Coordinates': Points,
-                       'BoundryConditions': BCs}
+                       'BoundaryConditions': BCs}
 
     def Parse(self):
         """

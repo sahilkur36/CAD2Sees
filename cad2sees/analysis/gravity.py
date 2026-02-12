@@ -67,7 +67,7 @@ def do(NodeData, IterationNum=50, Tol=1e-5, TestPFlag=0):
     ops.reactions()
 
     # Calculate total base reaction for verification
-    BCMap = NodeData['BoundryConditions'][:, 2] == 1  # Z-restrained nodes
+    BCMap = NodeData['BoundaryConditions'][:, 2] == 1  # Z-restrained nodes
     FixNodes = NodeData['ID'][BCMap]
     BR = 0.0
     for nodei in FixNodes:

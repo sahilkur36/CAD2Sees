@@ -312,8 +312,6 @@ def FrameShear(OutDir, CapacityDir, step=-1, saveouts=1, addInfill=1,
             for f_idx in FrameList[0, :]:
                 f_idx_in_frames = np.where(Frames['ID'] == f_idx)[0][0]
                 SectionName_I = Frames['SectionTypI'][f_idx_in_frames]
-                if f_idx == 100118:
-                    print('Frame 100118')
                 I_id = Frames['i_ID'][f_idx_in_frames]
                 J_id = Frames['j_ID'][f_idx_in_frames]
                 Node_idx_i = np.where(Nodes['ID'] == I_id)[0][0]

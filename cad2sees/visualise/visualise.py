@@ -302,6 +302,21 @@ class visualise:
             color=frame_props['color'],
             line_width=frame_props['lw'],
             opacity=frame_props['alpha'])
+        if InfillEdges.shape[0] > 0:
+            padding = np.empty(InfillEdges.shape[0], int) * 2
+            padding[:] = 2
+            self.PaddedInfillEdges = np.vstack((padding, InfillEdges.T)).T
+
+            meshInfill = pv.PolyData()
+            meshInfill.points = Nodes
+            meshInfill.lines = self.PaddedInfillEdges
+            self.p.add_mesh(
+                meshInfill,
+                render_lines_as_tubes=False,
+                style='wireframe',
+                color=infill_props['color'],
+                line_width=infill_props['lw'],
+                opacity=infill_props['alpha'])
 
         padding = np.empty(InfillEdges.shape[0], int) * 2
         padding[:] = 2

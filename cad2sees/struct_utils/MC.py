@@ -858,6 +858,17 @@ class MC:
             [sys.executable, mc_ops_path, temp_file_path],
             capture_output=True, text=True
         )
+        os.remove(temp_file_path)
+        try:
+            results_dict = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            print("Error decoding JSON from OpenSees output:")
+            print(result.stdout)
+            raise e
+        if len(results_dict['Mzs']) <= 10:
+            print(result.stderr)
+            with open('mc_ops_data.json', 'w') as f:
+                json.dump(mc_ops_data, f, indent=2)
 
         results_dict = json.loads(result.stdout)
         Mzs = results_dict['Mzs']

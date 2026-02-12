@@ -22,7 +22,7 @@ def rigid_diaphragm(NodeData, RDFLag):
     Parameters
     ----------
     NodeData : dict
-        Node information including ID, Type, Coordinates, BoundryConditions,
+        Node information including ID, Type, Coordinates, BoundaryConditions,
         Mass arrays
     RDFLag : int
         Rigid diaphragm flag:
@@ -37,7 +37,7 @@ def rigid_diaphragm(NodeData, RDFLag):
         master/slave node relationships, and restraint nodes
     """
     # Create boundary condition and BCJ node mapping arrays
-    BCMap = NodeData['BoundryConditions'][:, 2] == 1  # Z-restrained nodes
+    BCMap = NodeData['BoundaryConditions'][:, 2] == 1  # Z-restrained nodes
     BCJMap = np.array(NodeData['Type']) == 'BCJ'      # Beam-column joints
 
     # Get sorted unique floor elevations (excluding restrained nodes)
@@ -127,6 +127,30 @@ def rigid_diaphragm(NodeData, RDFLag):
 
     # No rigid diaphragm case
     else:
+        for Z in Zs:
+            # Find all nodes at current floor elevation
+            ZsAll = NodeData['Coordinates'][:, 2] * units.cm
+            ZMap = np.array(ZsAll) == Z
+
+            # Identify column top (BCJ) nodes at this floor
+            ColumnTopMap = ZMap & (BCJMap)
+            # Select master node from BCJ candidates
+            MasterCandidates = NodeData['ID'][ColumnTopMap]
+            
+            if len(MasterCandidates) % 2 != 0:
+                rNodeIDX = len(MasterCandidates) // 2      # Middle for odd
+            else:
+                rNodeIDX = len(MasterCandidates) // 2 - 1  # Middle-1 for even
+
+            # Create master node ID with prefix '1'
+            rNode = int(float(f'1{MasterCandidates[rNodeIDX]}'))
+
+            # Create slave node lists (other BCJ + non-BCJ nodes)
+            cNodes = [int(float(f'1{c}')) for c in MasterCandidates]
+
+            # Store constraint information and apply OpenSees constraint
+            PushNodes[str(Z)] = cNodes
+        PushNodes['TopNode'] = rNode
         print("No Rigid Diaphragm Modelled!")
 
     # Store restraint nodes and return constraint information

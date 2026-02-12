@@ -84,7 +84,7 @@ def create(point_data, frame_data, section_data, elastic_joint_flag=0):
 
         # Calculate nodal mass and loads
         node_mass = np.asarray([
-            mass_data[i], mass_data[i], 1e-16, 1e-16, 1e-16, 1e-16
+            mass_data[i], mass_data[i], mass_data[i], 1e-16, 1e-16, 1e-16
         ])
         node_load = load_data[i] * units.kN
 

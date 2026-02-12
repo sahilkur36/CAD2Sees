@@ -15,8 +15,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize
 
-
-def multi_linear(X, Y, Flags):
+def multi_linear(X, Y, Flags, peak_ratio=0.4):
     """
     Create a trilinear idealisation of a nonlinear curve.
 
@@ -77,41 +76,283 @@ def multi_linear(X, Y, Flags):
         else:
             return None
 
-    def trilinear_curve(xs, *params):
+
+    def minimise_area(params, xs, ys):
+        real_area = np.trapz(ys, xs)
+        xmin = xs[0]
+        xmax = xs[-1]
+        ymin = ys[0]
+        ymax = ys[-1]
+        xmid = params[0]
+        ymid = params[1]
+        x_ideal = [xmin, xmid, xmax]
+        y_ideal = [ymin, ymid, ymax]
+        ideal_area = np.trapz(y_ideal, x_ideal)
+        if (ymid-ymin)/(xmid-xmin) > (ymin-ymid)/(xmin-xmid):
+            return abs(real_area - ideal_area)*10
+        else:
+            return abs(real_area - ideal_area)
+
+    # Determine sign of Y and X data for proper handling of negative curves
+    if max(Y) != max(abs(Y)):
+        SignY = -1
+    else:
+        SignY = 1
+
+    if max(X) != max(abs(X)):
+        SignX = -1
+    else:
+        SignX = 1
+
+    # Work with positive values internally
+    Y *= SignY
+    X *= SignX
+    Flags = abs(np.array(Flags))
+
+    # Determine end point for curve fitting
+    X_end = Flags[1]
+    if X_end > max(X):
+        X_end = max(X)
+
+    # Cap X_end to min Y to be 0.05*YPeak
+    YPeak_temp = max(Y)
+    Y_min_cap = 0.05 * YPeak_temp
+    X_post_peak = X[np.where(Y == YPeak_temp)[0][0]:]
+    Y_post_peak = Y[np.where(Y == YPeak_temp)[0][0]:]
+    if sum(Y_post_peak <= Y_min_cap) > 0:
+        X_end = min(X_end, X_post_peak[Y_post_peak <= Y_min_cap][0])
+    else:
+        X_end = min(X_end, X_post_peak[-1])
+
+    # Find actual end point and corresponding Y value
+    end_idx = min_positive_index(X - X_end) - 1
+    Y_end = Y[end_idx]
+    X_end = X[end_idx]
+
+    # Extract data up to end point for fitting
+    XS = X[:end_idx]
+    YS = Y[:end_idx]
+
+    # Find peak value before collapse
+    YPreCol = Y[:min_positive_index(X - X_end)]
+    YPeak = max(YPreCol)
+
+    # Cap values above peak to avoid numerical issues
+    Y[Y > YPeak] = 0.1 * YPeak
+
+    # Calculate idealized initial stiffness
+    X_iniReal = Flags[0]
+    real_yield_idx = np.argwhere(X < X_iniReal)[-1][0] + 1
+    # real_yield_idx = np.argwhere(X == X_iniReal)[0][0]
+
+    # Create interpolation function for pre-yield behavior
+    YXCurve_PreYield = interp1d(
+        Y[:real_yield_idx],
+        X[:real_yield_idx],
+        kind='linear',
+        fill_value='extrapolate'
+    )
+
+    # Find idealized yield point and initial stiffness
+    X_iniIdeal = YXCurve_PreYield(YPeak * peak_ratio)
+    E_iniIdeal = peak_ratio * YPeak / X_iniIdeal
+    Y_iniIdeal = X_iniIdeal * E_iniIdeal
+    X_at_Peak = X[Y == YPeak][0]
+    # Get the filtered data
+    x_filtered = XS[(X_iniIdeal <= XS) & (XS <= X_at_Peak)]
+    y_filtered = YS[(X_iniIdeal <= XS) & (XS <= X_at_Peak)]
+    # Normalize filtered data to 0-1 range
+    x_min, x_max = x_filtered.min(), x_filtered.max()
+    y_min, y_max = y_filtered.min(), y_filtered.max()
+    x_filtered_norm = (x_filtered - x_min) / (x_max - x_min) if x_max > x_min else x_filtered
+    y_filtered_norm = (y_filtered - y_min) / (y_max - y_min) if y_max > y_min else y_filtered
+
+    bounds = [
+        (x_filtered_norm[0], x_filtered_norm[-1]),
+        (y_filtered_norm[0], y_filtered_norm[-1])
+    ]
+
+    res = minimize(
+        minimise_area,
+        (x_filtered_norm[-1], 0.95 * y_filtered_norm[-1]),
+        args=(x_filtered_norm, y_filtered_norm),
+        bounds=bounds,
+        tol=1e-16
+    )
+    X_pre_peak_norm = res.x[0]
+    Y_pre_peak_norm = res.x[1]
+
+    X_pre_peak = X_pre_peak_norm * (x_max - x_min) + x_min
+    Y_pre_peak = Y_pre_peak_norm * (y_max - y_min) + y_min
+
+    if Y_iniIdeal/X_iniIdeal < (Y_pre_peak-Y_iniIdeal)/(X_pre_peak-X_iniIdeal):
+        Y_pre_peak = (Y_iniIdeal/X_iniIdeal) * X_pre_peak
+
+    XYCurve_PrePeak = interp1d(
+        x_filtered,
+        y_filtered,
+        kind='linear',
+        fill_value='extrapolate'
+    )
+    y_at_xpre_peak = XYCurve_PrePeak(X_pre_peak)
+    if Y_pre_peak >= y_at_xpre_peak:
+        Y_pre_peak = (y_at_xpre_peak + Y_pre_peak)*0.5
+
+    if Y_pre_peak >= 0.9*YPeak:
+        Y_pre_peak = 0.9*YPeak
+
+
+    # Create idealized curve control points
+    IdealX = np.array([
+        0, X_iniIdeal, X_pre_peak, X_at_Peak, X_end
+    ]) * SignX
+    IdealY = np.array([
+        0, Y_iniIdeal, Y_pre_peak, YPeak, Y_end
+    ]) * SignY
+    X = X * SignX
+    Y = Y * SignY
+    return IdealX, IdealY
+
+
+def multi_linearX(X, Y, Flags, peak_ratio=0.1):
+    """
+    Create a trilinear idealisation of a nonlinear curve.
+
+    Fits a trilinear curve to input data for creating idealised plastic
+    hinge models from moment-curvature or force-displacement relationships.
+
+    The trilinear model consists of:
+    1. Initial elastic segment
+    2. Yielding/hardening segment
+    3. Post-peak/softening segment
+    4. Residual strength segment
+
+    Parameters
+    ----------
+    X : array_like
+        Independent variable data (e.g., curvature, displacement)
+    Y : array_like
+        Dependent variable data (e.g., moment, force)
+    Flags : array_like
+        Control parameters [initial yield point X, end point X]
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        Tuple containing:
+        - IdealX: X-coordinates of idealised curve control points
+        - IdealY: Y-coordinates of idealised curve control points
+        
+        Both arrays have 5 points: [origin, yield, peak, end, residual]
+
+    Notes
+    -----
+    Automatically handles negative curves and preserves initial stiffness,
+    peak strength, and post-peak behaviour through optimisation.
+    """
+    def min_positive_index(arr):
         """
-        Generate trilinear curve values for given x-coordinates.
+        Find the index of the minimum non-negative value in an array.
 
         Parameters
         ----------
-        xs : array_like
-            X-coordinates for curve evaluation
-        *params : tuple
-            Parameters (XLim1, XLim2) defining transition points
+        arr : array_like
+            Input array to search
 
         Returns
         -------
-        np.ndarray
-            Y-values of trilinear curve at given x-coordinates
+        int or None
+            Index of minimum non-negative value, or None if not found
         """
-        XLim1, XLim2 = params
-        y = np.zeros(xs.shape)
+        # Filter out negative values
+        positive_values = arr[arr >= 0]
+        # Find the minimum non-negative value
+        if len(positive_values) > 0:
+            min_positive_val = np.min(positive_values)
+            # Find the index of the minimum non-negative value
+            min_positive_idx = np.where(arr == min_positive_val)[0][0]
+            return min_positive_idx
+        else:
+            return None
 
-        # Define segments of the trilinear curve
-        map1 = (xs <= XLim1)  # Initial elastic segment
-        map2 = (xs > XLim1) & (xs <= XLim2)  # Hardening segment
-        map3 = (xs > XLim2) & (xs <= X_end)  # Post-peak segment
-        map4 = ~(map1 | map2 | map3)  # Beyond end point
+    # def trilinear_curve(xs, *params):
+    #     """
+    #     Generate trilinear curve values for given x-coordinates.
 
-        # Calculate y-values for each segment
-        y[map1] = xs[map1] * E_iniIdeal
-        y[map2] = (XLim1 * E_iniIdeal +
-                   (xs[map2] - XLim1) * (YPeak - XLim1 * E_iniIdeal) /
-                   (XLim2 - XLim1))
-        y[map3] = (YPeak + (xs[map3] - XLim2) * (Y_end - YPeak) /
-                   (X_end - XLim2))
-        y[map4] = 0  # Zero beyond end point
-        return y
+    #     Parameters
+    #     ----------
+    #     xs : array_like
+    #         X-coordinates for curve evaluation
+    #     *params : tuple
+    #         Parameters (XLim1, XLim2) defining transition points
 
+    #     Returns
+    #     -------
+    #     np.ndarray
+    #         Y-values of trilinear curve at given x-coordinates
+    #     """
+    #     XLim1, XLim2 = params
+    #     y = np.zeros(xs.shape)
+
+    #     # Define segments of the trilinear curve
+    #     map1 = (xs <= XLim1)  # Initial elastic segment
+    #     map2 = (xs > XLim1) & (xs <= XLim2)  # Hardening segment
+    #     map3 = (xs > XLim2) & (xs <= X_end)  # Post-peak segment
+    #     map4 = ~(map1 | map2 | map3)  # Beyond end point
+
+    #     # Calculate y-values for each segment
+    #     y[map1] = xs[map1] * E_iniIdeal
+    #     y[map2] = (XLim1 * E_iniIdeal +
+    #                (xs[map2] - XLim1) * (YPeak - XLim1 * E_iniIdeal) /
+    #                (XLim2 - XLim1))
+    #     y[map3] = (YPeak + (xs[map3] - XLim2) * (Y_end - YPeak) /
+    #                (X_end - XLim2))
+    #     y[map4] = 0  # Zero beyond end point
+    #     return y
+
+    # def trilinear_curve_obj(params, xs, ys):
+    #     """
+    #     Objective function for trilinear curve optimisation.
+
+    #     Calculates the sum of squared errors between the trilinear
+    #     approximation and the original data points.
+
+    #     Parameters
+    #     ----------
+    #     params : tuple
+    #         Parameters (XLim1, XLim2) defining transition points
+    #     xs : array_like
+    #         X-coordinates of data points
+    #     ys : array_like
+    #         Y-coordinates of data points
+
+    #     Returns
+    #     -------
+    #     float
+    #         Sum of squared errors between fitted and original curve
+    #     """
+    #     XLim1, XLim2 = params
+    #     XLim2 = min(XLim2, X_end)  # Constrain XLim2 to end point
+    #     y = np.zeros(xs.shape)
+
+    #     # Define segments of the trilinear curve
+    #     map1 = (xs <= XLim1)  # Initial elastic segment
+    #     map2 = (xs > XLim1) & (xs <= XLim2)  # Hardening segment
+    #     map3 = (xs > XLim2) & (xs <= X_end)  # Post-peak segment
+    #     map4 = ~(map1 | map2 | map3)  # Beyond end point
+
+    #     # Calculate y-values for each segment
+    #     y[map1] = xs[map1] * E_iniIdeal
+    #     y[map2] = (XLim1 * E_iniIdeal +
+    #                (xs[map2] - XLim1) * (YPeak - XLim1 * E_iniIdeal) /
+    #                (XLim2 - XLim1))
+    #     y[map3] = (YPeak + (xs[map3] - XLim2) * (Y_end - YPeak) /
+    #                (X_end - XLim2))
+    #     y[map4] = 0  # Zero beyond end point
+
+    #     # Return sum of squared errors
+    #     return np.sum((y - ys)**2)
+    
     def trilinear_curve_obj(params, xs, ys):
         """
         Objective function for trilinear curve optimisation.
@@ -148,8 +389,9 @@ def multi_linear(X, Y, Flags):
         y[map2] = (XLim1 * E_iniIdeal +
                    (xs[map2] - XLim1) * (YPeak - XLim1 * E_iniIdeal) /
                    (XLim2 - XLim1))
-        y[map3] = (YPeak + (xs[map3] - XLim2) * (Y_end - YPeak) /
-                   (X_end - XLim2))
+        # Post-peak branch: no softening
+        k_post = 1e-4 * E_iniIdeal
+        y[map3] = YPeak + k_post * (xs[map3] - XLim2)
         y[map4] = 0  # Zero beyond end point
 
         # Return sum of squared errors
@@ -171,10 +413,22 @@ def multi_linear(X, Y, Flags):
     X *= SignX
     Flags = abs(np.array(Flags))
 
+    
+
     # Determine end point for curve fitting
     X_end = Flags[1]
     if X_end > max(X):
         X_end = max(X)
+
+    # Cap X_end to min Y to be 0.2*YPeak
+    YPeak_temp = max(Y)
+    Y_min_cap = 0.2 * YPeak_temp
+    X_post_peak = X[np.where(Y == YPeak_temp)[0][0]:]
+    Y_post_peak = Y[np.where(Y == YPeak_temp)[0][0]:]
+    if sum(Y_post_peak <= Y_min_cap) > 0:
+        X_end = min(X_end, X_post_peak[Y_post_peak <= Y_min_cap][0])
+    else:
+        X_end = min(X_end, X_post_peak[-1])
 
     # Find actual end point and corresponding Y value
     end_idx = min_positive_index(X - X_end) - 1
@@ -194,6 +448,7 @@ def multi_linear(X, Y, Flags):
 
     # Calculate idealized initial stiffness
     X_iniReal = Flags[0]
+    # real_yield_idx = np.argwhere(X < X_iniReal)[-1][0]
     real_yield_idx = np.argwhere(X == X_iniReal)[0][0]
 
     # Create interpolation function for pre-yield behavior
@@ -205,8 +460,8 @@ def multi_linear(X, Y, Flags):
     )
 
     # Find idealized yield point and initial stiffness
-    X_iniIdeal = YXCurve_PreYield(YPeak * 0.1)
-    E_iniIdeal = 0.1 * YPeak / X_iniIdeal
+    X_iniIdeal = YXCurve_PreYield(YPeak * peak_ratio)
+    E_iniIdeal = peak_ratio * YPeak / X_iniIdeal
     X_at_Peak = X[Y == YPeak][0]
     Y_end = Y[end_idx]
 
@@ -229,7 +484,7 @@ def multi_linear(X, Y, Flags):
 
     # Determine post-end behavior for residual strength
     Y_PostEnd = Y[np.argwhere(Y == Y_end)[0][0]:]
-    post_peak_threshold = 0.1 * YPeak
+    post_peak_threshold = 0.3 * YPeak
 
     if sum(Y_PostEnd <= post_peak_threshold) == 0:
         # No significant strength degradation found
@@ -241,6 +496,10 @@ def multi_linear(X, Y, Flags):
         Y_PP = Y_PostEnd[threshold_idx]
         X_PostEnd = X[np.argwhere(Y == Y_end)[0][0]:]
         X_PP = X_PostEnd[threshold_idx]
+        if X_PP <= X_end:
+            X_PP = X_end
+            X_end = X_PostEnd[threshold_idx]
+
 
     # Extract optimized parameters
     X_iniIdeal = res.x[0]
@@ -257,10 +516,9 @@ def multi_linear(X, Y, Flags):
 
     # Create idealized curve control points
     IdealX = np.array([
-        0, X_iniIdeal, X_at_Peak, X_end, X_PP + 1e-3
+        0, X_iniIdeal, X_at_Peak, X_end, 1.1*(X_PP + 1e-3)
     ]) * SignX
     IdealY = np.array([
-        0, Y_iniIdeal, YPeak, Y_end, Y_PP
+        0, Y_iniIdeal, YPeak, Y_end, min(Y_PP, 0.9*Y_end)
     ]) * SignY
-
     return IdealX, IdealY

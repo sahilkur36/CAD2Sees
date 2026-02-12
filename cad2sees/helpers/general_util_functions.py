@@ -6,7 +6,7 @@ methods, function manipulation, and data processing utilities.
 """
 
 
-def find_zero(f, vars, a, b, tolerance=1e-6, max_iterations=100):
+def find_zero(f, vars, a, b, tolerance=1e-3, max_iterations=100):
     """
     Find the zero of a function using the bisection method.
     
@@ -30,7 +30,7 @@ def find_zero(f, vars, a, b, tolerance=1e-6, max_iterations=100):
     i = 0
     
     # Adjust bounds if function values have same sign
-    while (f(*avars) * f(*bvars) > 0) and i < 1000:
+    while (f(*avars) * f(*bvars) > 0) and i < 10000:
         a += 1e-3
         avars = [a] + vars
         i += 1

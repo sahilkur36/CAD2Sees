@@ -15,7 +15,8 @@ def create(ModelType,
            FrameData,
            SectionData,
            PointData,
-           GeometricTransforms):
+           GeometricTransforms,
+           shear_hinge=0):
     """
     Create frame elements for structural analysis models.
 
@@ -63,13 +64,16 @@ def create(ModelType,
         NJMap = np.where(PointData['ID'] == NodeJ)
 
         # Extract geometric transformation
-        GTMap = np.where(GeometricTransforms['ID'] == FrameData['GTID'][i])
+        GTMap = np.where(GeometricTransforms['ID'] == FrameData['GTID'][i])[0][0]
         GTTAG = GeometricTransforms['TAG'][GTMap]
 
         # Determine axial loads based on frame direction
         if FrameData['Direction'][i] == 3:
             INLoad = PointData['Load'][NIMap]
             JNLoad = PointData['Load'][NJMap]
+        if type(INLoad) is np.ndarray or type(INLoad) is list:
+            INLoad = INLoad[0]
+            JNLoad = JNLoad[0]
         else:
             INLoad = 0.0
             JNLoad = 0.0
@@ -79,14 +83,14 @@ def create(ModelType,
             'ID': NodeI,
             'Type': np.array(PointData['Type'])[NIMap][0],
             'Coordinates': PointData['Coordinates'][NIMap][0],
-            'u1': PointData['BoundryConditions'][NIMap][0][0],
+            'u1': PointData['BoundaryConditions'][NIMap][0][0],
             'NLoad': INLoad
         }
         NodeDataJ = {
             'ID': NodeJ,
             'Type': np.array(PointData['Type'])[NJMap][0],
             'Coordinates': PointData['Coordinates'][NJMap][0],
-            'u1': PointData['BoundryConditions'][NJMap][0][0],
+            'u1': PointData['BoundaryConditions'][NJMap][0][0],
             'NLoad': JNLoad
         }
 
@@ -95,13 +99,17 @@ def create(ModelType,
                       SectionI, SectionJ, NodeDataI, NodeDataJ)
 
         if ModelType == 'BWH_Fiber':
-            FCur = fm.BWH_Frame('Fiber', *frame_args)
+            FCur = fm.BWH_Frame('Fiber', *frame_args,
+                                shear_flag=shear_hinge)
         elif ModelType == 'BWH_FiberOPS':
-            FCur = fm.BWH_Frame('FiberOPS', *frame_args)
+            FCur = fm.BWH_Frame('FiberOPS', *frame_args,
+                                shear_flag=shear_hinge)
         elif ModelType == 'BWH_FiberOPS2':
-            FCur = fm.BWH_Frame('FiberOPS2', *frame_args)
+            FCur = fm.BWH_Frame('FiberOPS2', *frame_args,
+                                shear_flag=shear_hinge)
         elif ModelType == 'BWH_Simple':
-            FCur = fm.BWH_Frame('Simple', *frame_args)
+            FCur = fm.BWH_Frame('Simple', *frame_args,
+                                shear_flag=shear_hinge)
         else:
             raise ValueError(f"Unknown ModelType: {ModelType}")
 

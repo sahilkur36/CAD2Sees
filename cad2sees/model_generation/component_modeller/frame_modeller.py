@@ -214,22 +214,37 @@ class BWH_Frame:
                 )
             except IndexError:
                 flag_points.append(curvatures_clean[-1])
+        flag_points[-1] = np.sign(flag_points[0])*min(abs(flag_points[-1]),
+                                                      abs(flag_points[0])*30)
 
         # Add origin point
         moments_with_origin = np.insert(moments_clean, 0, 0)
-        curvatures_with_origin = np.insert(curvatures_clean, 0, 0)
+        curvatures_with_origin = np.insert(curvatures_clean, 0, 0))
+        moments_with_origin_copy = moments_with_origin.copy()
+        curvatures_with_origin_copy = curvatures_with_origin.copy()
 
         # Create idealized multi-linear relationship
         ideal_curvatures, ideal_moments = multi_linear(
-            curvatures_with_origin, moments_with_origin, flag_points
+            curvatures_with_origin_copy, moments_with_origin_copy, flag_points, peak_ratio=0.4
         )
+        yield_point = curvatures_with_origin == flag_points[0]
+        init_stiff = moments_with_origin[yield_point][0]/curvatures_with_origin[yield_point][0]
+        yield_moment = moments_with_origin[yield_point][0]
+        idx40 = np.where(abs(moments_with_origin) >= abs(yield_moment)*0.8)[0][0]
+        if idx40 == 0:
+            idx40 = 1
+        init_stiff40 = moments_with_origin[idx40]/curvatures_with_origin[idx40]
 
         return ([curvatures_with_origin, moments_with_origin],
-                [ideal_curvatures, ideal_moments])
+                [ideal_curvatures, ideal_moments],
+                abs(init_stiff40))
 
     def _define_flexural_materials(self):
         if self.Type == 'Fiber':
-            LoadStrI = str(self.IND['NLoad'])
+            if isinstance(self.IND['NLoad'], float):
+                LoadStrI = str(self.IND['NLoad'])
+            else:
+                LoadStrI = str(self.IND['NLoad'][0])
             if 'MCOut' in self.ISP and LoadStrI in self.ISP['MCOut']:
                 CurvIdealPZI = self.ISP['MCOut'][LoadStrI]['CurvIdealPZ']
                 MIdealPZI = self.ISP['MCOut'][LoadStrI]['MIdealPZ']
@@ -247,6 +262,10 @@ class BWH_Frame:
                 MNZI = self.ISP['MCOut'][LoadStrI]['MNZ']
                 CurvNYI = self.ISP['MCOut'][LoadStrI]['CurvNY']
                 MNYI = self.ISP['MCOut'][LoadStrI]['MNY']
+                InitStiffPZI = self.ISP['MCOut'][LoadStrI]['InitStiffPZ']
+                InitStiffNZI = self.ISP['MCOut'][LoadStrI]['InitStiffNZ']
+                InitStiffPYI = self.ISP['MCOut'][LoadStrI]['InitStiffPY']
+                InitStiffNYI = self.ISP['MCOut'][LoadStrI]['InitStiffNY']
             else:
                 # I Section Rotation Around Z-Z
                 CurSectID = self.ISP['ID']
@@ -256,7 +275,7 @@ class BWH_Frame:
                            self.IND['NLoad'],
                            0.0)  # 0 degrees in radians
                 Ms, _, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Positive')
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffPZI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvPZI, MPZI], [CurvIdealPZI, MIdealPZI] = CleanCM, IdealCM
                 # Negative
@@ -264,7 +283,7 @@ class BWH_Frame:
                            self.IND['NLoad'],
                            0.0)  # 0 degrees in radians
                 Ms, _, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Negative')
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffNZI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvNZI, MNZI], [CurvIdealNZI, MIdealNZI] = CleanCM, IdealCM
 
@@ -274,7 +293,7 @@ class BWH_Frame:
                            self.IND['NLoad'],
                            np.pi*0.5)  # 90 degrees in radians
                 _, Ms, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Positive')
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffPYI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvPYI, MPYI], [CurvIdealPYI, MIdealPYI] = CleanCM, IdealCM
 
@@ -283,7 +302,7 @@ class BWH_Frame:
                            self.IND['NLoad'],
                            np.pi*0.5)  # 90 degrees in radians
                 _, Ms, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Negative')
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffNYI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvNYI, MNYI], [CurvIdealNYI, MIdealNYI] = CleanCM, IdealCM
 
@@ -302,14 +321,21 @@ class BWH_Frame:
                             'CurvPY': CurvPYI,
                             'MPY': MPYI,
                             'CurvNY': CurvNYI,
-                            'MNY': MNYI}
+                            'MNY': MNYI,
+                            'InitStiffPZ': InitStiffPZI,
+                            'InitStiffNZ': InitStiffNZI,
+                            'InitStiffPY': InitStiffPYI,
+                            'InitStiffNY': InitStiffNYI}
 
             if self.ISP['ID'] == self.JSP['ID']:
                 if 'MCOut' not in self.JSP:
                     self.JSP['MCOut'] = {}
                 self.JSP['MCOut'][LoadStrI] = self.MCOutsI
 
-            LoadStrJ = str(self.JND['NLoad'])
+            if isinstance(self.JND['NLoad'], float):
+                LoadStrJ = str(self.JND['NLoad'])
+            else:
+                LoadStrJ = str(self.JND['NLoad'][0])
             if 'MCOut' in self.JSP and LoadStrJ in self.JSP['MCOut']:
                 CurvIdealPZJ = self.JSP['MCOut'][LoadStrJ]['CurvIdealPZ']
                 MIdealPZJ = self.JSP['MCOut'][LoadStrJ]['MIdealPZ']
@@ -327,6 +353,10 @@ class BWH_Frame:
                 MPYJ = self.JSP['MCOut'][LoadStrJ]['MPY']
                 CurvNYJ = self.JSP['MCOut'][LoadStrJ]['CurvNY']
                 MNYJ = self.JSP['MCOut'][LoadStrJ]['MNY']
+                InitStiffPZJ = self.JSP['MCOut'][LoadStrJ]['InitStiffPZ']
+                InitStiffNZJ = self.JSP['MCOut'][LoadStrJ]['InitStiffNZ']
+                InitStiffPYJ = self.JSP['MCOut'][LoadStrJ]['InitStiffPY']
+                InitStiffNYJ = self.JSP['MCOut'][LoadStrJ]['InitStiffNY']
             else:
                 # J Section Rotation Around Z-Z
                 CurSectID = self.JSP['ID']
@@ -336,7 +366,7 @@ class BWH_Frame:
                            0.0)  # 0 degrees in radians
                 # Positive
                 Ms, _, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Positive')
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffPZJ = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvPZJ, MPZJ], [CurvIdealPZJ, MIdealPZJ] = CleanCM, IdealCM
 
@@ -346,7 +376,7 @@ class BWH_Frame:
                            0.0)  # 0 degrees in radians
                 Ms, _, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Negative')
 
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffNZJ = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvNZJ, MNZJ], [CurvIdealNZJ, MIdealNZJ] = CleanCM, IdealCM
 
@@ -356,7 +386,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
                 # Positive
                 _, Ms, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Positive')
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffPYJ = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvPYJ, MPYJ], [CurvIdealPYJ, MIdealPYJ] = CleanCM, IdealCM
 
@@ -366,7 +396,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
                 _, Ms, Curvs, xMaxs, xLims = MCCur.fiber_analysis('Negative')
 
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffNYJ = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvNYJ, MNYJ], [CurvIdealNYJ, MIdealNYJ] = CleanCM, IdealCM
 
@@ -385,10 +415,17 @@ class BWH_Frame:
                             'CurvPY': CurvPYJ,
                             'MPY': MPYJ,
                             'CurvNY': CurvNYJ,
-                            'MNY': MNYJ}
+                            'MNY': MNYJ,
+                            'InitStiffPZ': InitStiffPZJ,
+                            'InitStiffNZ': InitStiffNZJ,
+                            'InitStiffPY': InitStiffPYJ,
+                            'InitStiffNY': InitStiffNYJ}
 
         elif self.Type == 'FiberOPS':
-            LoadStrI = str(self.IND['NLoad'])
+            if isinstance(self.IND['NLoad'], float):
+                LoadStrI = str(self.IND['NLoad'])
+            else:
+                LoadStrI = str(self.IND['NLoad'][0])
             if 'MCOut' in self.ISP and LoadStrI in self.ISP['MCOut']:
                 CurvIdealPZI = self.ISP['MCOut'][LoadStrI]['CurvIdealPZ']
                 MIdealPZI = self.ISP['MCOut'][LoadStrI]['MIdealPZ']
@@ -406,6 +443,10 @@ class BWH_Frame:
                 MNZI = self.ISP['MCOut'][LoadStrI]['MNZ']
                 CurvNYI = self.ISP['MCOut'][LoadStrI]['CurvNY']
                 MNYI = self.ISP['MCOut'][LoadStrI]['MNY']
+                InitStiffPZI = self.ISP['MCOut'][LoadStrI]['InitStiffPZ']
+                InitStiffNZI = self.ISP['MCOut'][LoadStrI]['InitStiffNZ']
+                InitStiffPYI = self.ISP['MCOut'][LoadStrI]['InitStiffPY']
+                InitStiffNYI = self.ISP['MCOut'][LoadStrI]['InitStiffNY']
             else:
                 # I Section Rotation Around Z-Z using OpenSees fiber analysis
                 CurSectID = self.ISP['ID']
@@ -418,7 +459,7 @@ class BWH_Frame:
                 Ms, _, Curvs, xMaxs, xLims = MCCur.FiberOPS(
                     'Positive', axialLoad=CurSectL)
                 # Use default limits for OpenSees analysis
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffPZI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvPZI, MPZI], [CurvIdealPZI, MIdealPZI] = CleanCM, IdealCM
                 # Negative
@@ -428,7 +469,7 @@ class BWH_Frame:
                            0)  # 0 degrees in radians
                 Ms, _, Curvs, xMaxs, xLims = MCCur.FiberOPS(
                     'Negative', axialLoad=CurSectL)
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffNZI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvNZI, MNZI], [CurvIdealNZI, MIdealNZI] = CleanCM, IdealCM
 
@@ -442,7 +483,7 @@ class BWH_Frame:
 
                 _, Ms, Curvs, xMaxs, xLims = MCCur.FiberOPS('Positive',
                                                             axialLoad=CurSectL)
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffPYI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvPYI, MPYI], [CurvIdealPYI, MIdealPYI] = CleanCM, IdealCM
 
@@ -455,7 +496,7 @@ class BWH_Frame:
 
                 _, Ms, Curvs, xMaxs, xLims = MCCur.FiberOPS('Negative',
                                                             axialLoad=CurSectL)
-                CleanCM, IdealCM = self._make_multi_linear(Ms, Curvs,
+                CleanCM, IdealCM, InitStiffNYI = self._make_multi_linear(Ms, Curvs,
                                                            xMaxs, xLims)
                 [CurvNYI, MNYI], [CurvIdealNYI, MIdealNYI] = CleanCM, IdealCM
 
@@ -474,14 +515,20 @@ class BWH_Frame:
                             'CurvPY': CurvPYI,
                             'MPY': MPYI,
                             'CurvNY': CurvNYI,
-                            'MNY': MNYI}
+                            'MNY': MNYI,
+                            'InitStiffPZ': InitStiffPZI,
+                            'InitStiffNZ': InitStiffNZI,
+                            'InitStiffPY': InitStiffPYI,
+                            'InitStiffNY': InitStiffNYI}
 
             if self.ISP['ID'] == self.JSP['ID']:
                 if 'MCOut' not in self.JSP:
                     self.JSP['MCOut'] = {}
                 self.JSP['MCOut'][LoadStrI] = self.MCOutsI
-
-            LoadStrJ = str(self.JND['NLoad'])
+            if isinstance(self.JND['NLoad'], float):
+                LoadStrJ = str(self.JND['NLoad'])
+            else:
+                LoadStrJ = str(self.JND['NLoad'][0])
             if 'MCOut' in self.JSP and LoadStrJ in self.JSP['MCOut']:
                 CurvIdealPZJ = self.JSP['MCOut'][LoadStrJ]['CurvIdealPZ']
                 MIdealPZJ = self.JSP['MCOut'][LoadStrJ]['MIdealPZ']
@@ -499,6 +546,10 @@ class BWH_Frame:
                 MPYJ = self.JSP['MCOut'][LoadStrJ]['MPY']
                 CurvNYJ = self.JSP['MCOut'][LoadStrJ]['CurvNY']
                 MNYJ = self.JSP['MCOut'][LoadStrJ]['MNY']
+                InitStiffPZJ = self.JSP['MCOut'][LoadStrJ]['InitStiffPZ']
+                InitStiffNZJ = self.JSP['MCOut'][LoadStrJ]['InitStiffNZ']
+                InitStiffPYJ = self.JSP['MCOut'][LoadStrJ]['InitStiffPY']
+                InitStiffNYJ = self.JSP['MCOut'][LoadStrJ]['InitStiffNY']
             else:
                 # J Section Rotation Around Z-Z using OpenSees fiber analysis
                 CurSectID = self.JSP['ID']
@@ -508,7 +559,7 @@ class BWH_Frame:
                            self.JND['NLoad'],
                            0.0)  # 0 degrees in radians
                 Ms, _, Curvs, xMaxs, strain_limits = MCCur.FiberOPS('Positive')
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffPZJ = self._make_multi_linear(
                     Ms, Curvs, xMaxs, strain_limits)
                 [CurvPZJ, MPZJ], [CurvIdealPZJ, MIdealPZJ] = CleanCM, IdealCM
 
@@ -517,7 +568,7 @@ class BWH_Frame:
                            self.JND['NLoad'],
                            0.0)  # 0 degrees in radians
                 Ms, _, Curvs, xMaxs, strain_limits = MCCur.FiberOPS('Negative')
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffNZJ = self._make_multi_linear(
                     Ms, Curvs, xMaxs, strain_limits)
                 [CurvNZJ, MNZJ], [CurvIdealNZJ, MIdealNZJ] = CleanCM, IdealCM
 
@@ -528,7 +579,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
 
                 _, Ms, Curvs, xMaxs, strain_limits = MCCur.FiberOPS('Positive')
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffPYJ = self._make_multi_linear(
                     Ms, Curvs, xMaxs, strain_limits)
                 [CurvPYJ, MPYJ], [CurvIdealPYJ, MIdealPYJ] = CleanCM, IdealCM
 
@@ -537,7 +588,7 @@ class BWH_Frame:
                            self.JND['NLoad'],
                            np.pi*0.5)  # 90 degrees in radians
                 _, Ms, Curvs, xMaxs, strain_limits = MCCur.FiberOPS('Negative')
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffNYJ = self._make_multi_linear(
                     Ms, Curvs, xMaxs, strain_limits)
                 [CurvNYJ, MNYJ], [CurvIdealNYJ, MIdealNYJ] = CleanCM, IdealCM
 
@@ -556,7 +607,11 @@ class BWH_Frame:
                             'CurvPY': CurvPYJ,
                             'MPY': MPYJ,
                             'CurvNY': CurvNYJ,
-                            'MNY': MNYJ}
+                            'MNY': MNYJ,
+                            'InitStiffPZ': InitStiffPZJ,
+                            'InitStiffNZ': InitStiffNZJ,
+                            'InitStiffPY': InitStiffPYJ,
+                            'InitStiffNY': InitStiffNYJ}
 
         elif self.Type == 'FiberOPS2':
             LoadStrI = str(self.IND['NLoad'])
@@ -577,6 +632,10 @@ class BWH_Frame:
                 MNZI = self.ISP['MCOut'][LoadStrI]['MNZ']
                 CurvNYI = self.ISP['MCOut'][LoadStrI]['CurvNY']
                 MNYI = self.ISP['MCOut'][LoadStrI]['MNY']
+                InitStiffPZI = self.ISP['MCOut'][LoadStrI]['InitStiffPZ']
+                InitStiffNZI = self.ISP['MCOut'][LoadStrI]['InitStiffNZ']
+                InitStiffPYI = self.ISP['MCOut'][LoadStrI]['InitStiffPY']
+                InitStiffNYI = self.ISP['MCOut'][LoadStrI]['InitStiffNY']
             else:
                 # I Section Rotation Around Z-Z using OpenSees biaxial analysis
                 CurSectID = self.ISP['ID']
@@ -587,7 +646,7 @@ class BWH_Frame:
                            0)  # 0 degrees in radians
                 result = MCCur.FiberOPS2('Positive', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffPZI = self._make_multi_linear(
                     Mzs, Curvzs, xMaxs, strain_limits)
                 [CurvPZI, MPZI], [CurvIdealPZI, MIdealPZI] = CleanCM, IdealCM
 
@@ -597,7 +656,7 @@ class BWH_Frame:
                            0)  # 0 degrees in radians
                 result = MCCur.FiberOPS2('Negative', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffNZI = self._make_multi_linear(
                     Mzs, Curvzs, xMaxs, strain_limits)
                 [CurvNZI, MNZI], [CurvIdealNZI, MIdealNZI] = CleanCM, IdealCM
 
@@ -608,7 +667,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
                 result = MCCur.FiberOPS2('Positive', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffPYI = self._make_multi_linear(
                     Mys, Curvys, xMaxs, strain_limits)
                 [CurvPYI, MPYI], [CurvIdealPYI, MIdealPYI] = CleanCM, IdealCM
 
@@ -618,7 +677,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
                 result = MCCur.FiberOPS2('Negative', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffNYI = self._make_multi_linear(
                     Mys, Curvys, xMaxs, strain_limits)
                 [CurvNYI, MNYI], [CurvIdealNYI, MIdealNYI] = CleanCM, IdealCM
 
@@ -637,7 +696,11 @@ class BWH_Frame:
                             'CurvPY': CurvPYI,
                             'MPY': MPYI,
                             'CurvNY': CurvNYI,
-                            'MNY': MNYI}
+                            'MNY': MNYI,
+                            'InitStiffPZ': InitStiffPZI,
+                            'InitStiffNZ': InitStiffNZI,
+                            'InitStiffPY': InitStiffPYI,
+                            'InitStiffNY': InitStiffNYI}
 
             if self.ISP['ID'] == self.JSP['ID']:
                 if 'MCOut' not in self.JSP:
@@ -662,6 +725,10 @@ class BWH_Frame:
                 MPYJ = self.JSP['MCOut'][LoadStrJ]['MPY']
                 CurvNYJ = self.JSP['MCOut'][LoadStrJ]['CurvNY']
                 MNYJ = self.JSP['MCOut'][LoadStrJ]['MNY']
+                InitStiffPZJ = self.JSP['MCOut'][LoadStrJ]['InitStiffPZ']
+                InitStiffNZJ = self.JSP['MCOut'][LoadStrJ]['InitStiffNZ']
+                InitStiffPYJ = self.JSP['MCOut'][LoadStrJ]['InitStiffPY']
+                InitStiffNYJ = self.JSP['MCOut'][LoadStrJ]['InitStiffNY']
             else:
                 # J Section Rotation Around Z-Z using OpenSees biaxial analysis
                 CurSectID = self.JSP['ID']
@@ -673,7 +740,7 @@ class BWH_Frame:
                            0)  # 0 degrees in radians
                 result = MCCur.FiberOPS2('Positive', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffPZJ = self._make_multi_linear(
                     Mzs, Curvzs, xMaxs, strain_limits)
                 [CurvPZJ, MPZJ], [CurvIdealPZJ, MIdealPZJ] = CleanCM, IdealCM
 
@@ -683,7 +750,7 @@ class BWH_Frame:
                            0)  # 0 degrees in radians
                 result = MCCur.FiberOPS2('Negative', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffNZJ = self._make_multi_linear(
                     Mzs, Curvzs, xMaxs, strain_limits)
                 [CurvNZJ, MNZJ], [CurvIdealNZJ, MIdealNZJ] = CleanCM, IdealCM
 
@@ -694,7 +761,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
                 result = MCCur.FiberOPS2('Positive', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffPYJ = self._make_multi_linear(
                     Mys, Curvys, xMaxs, strain_limits)
                 [CurvPYJ, MPYJ], [CurvIdealPYJ, MIdealPYJ] = CleanCM, IdealCM
 
@@ -704,7 +771,7 @@ class BWH_Frame:
                            np.pi*0.5)  # 90 degrees in radians
                 result = MCCur.FiberOPS2('Negative', axialLoad=CurSectL)
                 Mzs, Mys, Curvzs, Curvys, xMaxs, strain_limits = result
-                CleanCM, IdealCM = self._make_multi_linear(
+                CleanCM, IdealCM, InitStiffNYJ = self._make_multi_linear(
                     Mys, Curvys, xMaxs, strain_limits)
                 [CurvNYJ, MNYJ], [CurvIdealNYJ, MIdealNYJ] = CleanCM, IdealCM
 
@@ -723,7 +790,11 @@ class BWH_Frame:
                             'CurvPY': CurvPYJ,
                             'MPY': MPYJ,
                             'CurvNY': CurvNYJ,
-                            'MNY': MNYJ}
+                            'MNY': MNYJ,
+                            'InitStiffPZ': InitStiffPZJ,
+                            'InitStiffNZ': InitStiffNZJ,
+                            'InitStiffPY': InitStiffPYJ,
+                            'InitStiffNY': InitStiffNYJ}
         elif self.Type == 'Simple':
             bi = self.ISP['b']*units.mm
             hi = self.ISP['h']*units.mm
@@ -830,6 +901,7 @@ class BWH_Frame:
             CurvIdealNZI = [0, -CurvyPZI, -CurvcPZI, -CurvuPZI, -CurvmPZI]
             CurvIdealNYI = [0, -CurvyPYI, -CurvcPYI, -CurvuPYI, -CurvmPYI]
 
+
             self.CurvOut = [CurvIdealPZI[1:], CurvIdealPYI[1:],
                             CurvIdealNZI[1:], CurvIdealNYI[1:]]
             self.MomPOut = [CurvIdealPZI[1:], CurvIdealPYI[1:],
@@ -840,6 +912,16 @@ class BWH_Frame:
             CurvIdealNZJ = [0, -CurvyPZJ, -CurvcPZJ, -CurvuPZJ, -CurvmPZJ]
             CurvIdealNYJ = [0, -CurvyPYJ, -CurvcPYJ, -CurvuPYJ, -CurvmPYJ]
 
+            
+            InitStiffNYI = MIdealNYI[1]/CurvIdealNYI[1]
+            InitStiffPYI = MIdealPYI[1]/CurvIdealPYI[1]
+            InitStiffNZI = MIdealNZI[1]/CurvIdealNZI[1]
+            InitStiffPZI = MIdealPZI[1]/CurvIdealPZI[1]
+            InitStiffNYJ = MIdealNYJ[1]/CurvIdealNYJ[1]
+            InitStiffPYJ = MIdealPYJ[1]/CurvIdealPYJ[1]
+            InitStiffNZJ = MIdealNZJ[1]/CurvIdealNZJ[1]
+            InitStiffPZJ = MIdealPZJ[1]/CurvIdealPZJ[1]
+
             self.MCOutsJ = {'CurvIdealPZ': CurvIdealPZJ,
                             'MIdealPZ': MIdealPZJ,
                             'CurvIdealNZ': CurvIdealNZJ,
@@ -847,7 +929,11 @@ class BWH_Frame:
                             'CurvIdealPY': CurvIdealPYJ,
                             'MIdealPY': MIdealPYJ,
                             'CurvIdealNY': CurvIdealNYJ,
-                            'MIdealNY': MIdealNYJ}
+                            'MIdealNY': MIdealNYJ,
+                            'InitStiffPZ': InitStiffPZJ,
+                            'InitStiffNZ': InitStiffNZJ,
+                            'InitStiffPY': InitStiffPYJ,
+                            'InitStiffNY': InitStiffNYJ}
 
             self.MCOutsI = {'CurvIdealPZ': CurvIdealPZI,
                             'MIdealPZ': MIdealPZI,
@@ -856,7 +942,11 @@ class BWH_Frame:
                             'CurvIdealPY': CurvIdealPYI,
                             'MIdealPY': MIdealPYI,
                             'CurvIdealNY': CurvIdealNYI,
-                            'MIdealNY': MIdealNYI}
+                            'MIdealNY': MIdealNYI,
+                            'InitStiffPZ': InitStiffPZI,
+                            'InitStiffNZ': InitStiffNZI,
+                            'InitStiffPY': InitStiffPYI,
+                            'InitStiffNY': InitStiffNYI}
 
         # Ratio of maximum deformation at which reloading begins
         rDispM = [0.1, 0.1]  # Pos_env. Neg_env.
@@ -931,8 +1021,273 @@ class BWH_Frame:
                              '-max', CurvLimyyJ)
 
     def _define_shear_materials(self):
-        # TODO
-        print('Shear Behaviour Not Implemented Yet!')
+        def compute_shear_envelopes(current_member_props):
+            fcr = current_member_props['fcr']
+            fc = current_member_props['fc']
+            fyV = current_member_props['fyV']
+            fyL = current_member_props['fyL']
+            Ec = current_member_props['Ec']
+            Es = current_member_props['Es']
+            Gc = Ec*0.4
+
+            # Loading Direction length
+            h = current_member_props['h']
+            # Loading Direction perpendicular length
+            b = current_member_props['b']
+            Ag = b*h
+            NLoad = current_member_props['NLoad']
+            if isinstance(NLoad, (list, tuple, np.ndarray)):
+                NLoad = NLoad[0]
+            Ls = current_member_props['Ls']
+            
+            Asv = current_member_props['Asv']
+            s = current_member_props['s']
+            phiT = current_member_props['phiT']
+            cv = current_member_props['cv']
+            rhoLong = current_member_props['rhoLong']
+            phiL = current_member_props['phiL']
+
+            d = h - phiT - cv - 0.5*phiL
+            di = phiT + cv + 0.5*phiL
+
+            nu = NLoad/(fc*Ag)
+            rhoShear = Asv/(s*b)
+
+            GA0 = 0.8*Ag*Gc
+
+            if self.SF == 1:
+                Vcr = fcr*((1+NLoad/(fcr*Ag))**0.5)*0.8*Ag/(Ls/h)
+                gammcr = Vcr/GA0
+                # Cracked Response - Before Failure
+                k = 0.29  # Since it is not possible to have shear-flexure
+                #           interaction and elements are not very ductile
+                #           k assumed as 0.29 Priestley et al [1993]
+                Vc = k*((fc/units.MPa)**0.5)*units.MPa*0.8*Ag
+                + NLoad*np.tan(0.5*h/Ls)
+                + Asv*fyV*(d-di)/s
+            elif self.SF == 2:
+                # EC8-3 Based Vc formulatrion on concrete contribution= Vcr
+                x = h*min((0.25+0.85*nu), 1)
+                # Vn => Term 1
+                Term1 = (min(NLoad/units.MN, 0.55*b*h*fc/units.MPa))*(h-x)/(2*Ls)
+                # Vc => Term 22
+                Term21 = 1
+                Term221 = 0.16*max(0.5, 100*rhoLong)
+                Term222 = 1-0.16*min(5, Ls/h)
+                Term223 = (b*(d-di)*(fc/units.MPa)**0.5)
+                Term22 = Term221*Term222*Term223
+                Vcr = Term22*(1/1.15)*units.MN
+                gammcr = Vcr/GA0
+                # Vw = Term 23
+                Vw = rhoShear*b*fyV*(d-di)*0.001
+                Term23 = Vw
+                Term2 = Term21*(Term22 + Term23)
+                Vc = ((1/1.15)*(Term1+Term2))*units.MN
+
+            GA1 = Es*b*(d-di)*rhoShear/(1+4*(Es/Ec)*rhoShear)
+            gammpkVar1 = (1-1.07*nu)
+            gammpkVar2 = (5.37-1.59*min(2.5, (Ls/h)))
+            gammpk = (gammcr+(Vc-Vcr)/GA1)*gammpkVar1*gammpkVar2
+            Vcc = np.float64(Vc).copy()
+            Vc = 0.95*Vcc
+            # Failiure
+            gammu = max((1-2.5*min(0.4, nu)) *
+                        (min(2.5, Ls/h)**2) *
+                        (0.31+17.8*min(0.08, rhoShear*fyV/fc)), 1)
+            gammu = gammu*gammpk
+            Vcc = Vc if gammu == 1 else Vcc
+
+            # Descending branch
+            nuL = max(NLoad/(rhoLong*fyL*b*d), 0.07)  # Min nu 0.07??? Zimos et al 2015
+            TauAve = Vc/(b*d)
+            Aconfpc = (d-di)*(b-2*(cv+phiT+phiL))/(b*h)
+
+            gammtpVar1 = 0.65*((rhoLong/Aconfpc)**1.2)
+
+            gammtpVar21 = (nuL*(s/d)*(TauAve/(fc/units.MPa)**0.5))
+            gammtpVar2 = ((rhoShear * fyV/gammtpVar21)**0.5)
+            gammtp = gammtpVar1*gammtpVar2
+
+            SppVar1 = 0.28*((nu+0.02)**0.5)
+            SppVar21 = (rhoShear+0.0011)
+            SppVar22 = ((rhoLong*(fyL/units.MPa)/Aconfpc)*(phiL/d)+0.06)
+
+            Spp = 7.36+SppVar1/(SppVar21*SppVar22)
+            Vres = Vc*(1-Spp*gammtp)
+            if Vres <= 0.3*Vc:
+                Vres = 0.3*Vc
+                gammtp = (1 - (Vres/Vc))/Spp
+            # Vres = max(Vres, 0.01)
+            gammm = gammu + gammtp
+            # import matplotlib.pyplot as plt
+            # import os
+            # cwd = os.getcwd()
+            # plt.figure()
+            # plt.plot([0, gammcr, gammpk, gammu, gammm],
+            #          [0, Vcr, Vc, Vcc, Vres], 'o-')
+            # plt.xlabel('Shear Strain')
+            # plt.ylabel('Shear Force (N)')
+            # plt.title('Shear Force vs Shear Strain Envelope')
+            # plt.grid(True)
+            # plt.savefig(os.path.join(cwd, 'dummy_figures2',
+            #                          f'shear_force_vs_shear_strain_envelope_{self.FID}.png'))
+            # plt.close()
+            return np.array([Vcr, Vc, Vcc, Vres]), np.array([gammcr, gammpk, gammu, gammm])
+
+        self.hingeShTagyyI = int(float(f"109{self.FID}"))
+        self.hingeShTagzzI = int(float(f"110{self.FID}"))
+        self.hingeShTagyyJ = int(float(f"209{self.FID}"))
+        self.hingeShTagzzJ = int(float(f"210{self.FID}"))
+
+        Xi = self.IND['Coordinates'][0]*units.cm
+        Yi = self.IND['Coordinates'][1]*units.cm
+        Zi = self.IND['Coordinates'][2]*units.cm
+
+        Xj = self.JND['Coordinates'][0]*units.cm
+        Yj = self.JND['Coordinates'][1]*units.cm
+        Zj = self.JND['Coordinates'][2]*units.cm
+        # Member length
+        L = ((Xi-Xj)**2 + (Yi-Yj)**2 + (Zi-Zj)**2)**0.5
+        # Shear Span is assumed to be half length of the element
+        Ls = L*0.5
+
+        phiLi = np.mean(self.ISP['ReinfL'][:, -1]**2)**0.5*units.mm
+        AsLongi = np.sum((self.ISP['ReinfL'][:, -1])**2)*0.25*np.pi
+        phiLj = np.mean(self.JSP['ReinfL'][:, -1]**2)**0.5*units.mm
+        AsLongj = np.sum((self.JSP['ReinfL'][:, -1])**2)*0.25*np.pi
+
+        phiT_i = self.ISP['phi_T']*units.mm
+        phiT_j = self.JSP['phi_T']*units.mm
+
+        yyI_props = {
+            'fcr': (self.ISP['fc0']**0.5)/3*units.MPa,
+            'fc': self.ISP['fc0']*units.MPa,
+            'fyV': self.ISP['fyw']*units.MPa,
+            'fyL': self.ISP['fy']*units.MPa,
+            'Es': self.ISP['Es']*units.MPa,
+            'Ec': self.ISP['Ec']*units.MPa,
+            'h': self.ISP['h']*units.mm,  # Shear in Y-Y direction
+            'b': self.ISP['b']*units.mm,
+            'NLoad': self.IND['NLoad']*units.kN,
+            'Ls': Ls,
+            'Asv': 0.25*self.ISP['NumofStrYDir']*phiT_i**2,
+            's': self.ISP['s']*units.mm,
+            'phiT': phiT_i,
+            'cv': self.ISP['Cover']*units.mm,
+            'rhoLong': AsLongi/(self.ISP['h']*self.ISP['b']),
+            'phiL': phiLi
+        }
+        yyJ_props = {
+            'fcr': (self.JSP['fc0']**0.5)/3*units.MPa,
+            'fc': self.JSP['fc0']*units.MPa,
+            'fyV': self.JSP['fyw']*units.MPa,
+            'fyL': self.JSP['fy']*units.MPa,
+            'Es': self.JSP['Es']*units.MPa,
+            'Ec': self.JSP['Ec']*units.MPa,
+            'h': self.JSP['b']*units.mm,  # Shear in Y-Y direction
+            'b': self.JSP['h']*units.mm,
+            'NLoad': self.JND['NLoad']*units.kN,
+            'Ls': Ls,
+            'Asv': 0.25*self.JSP['NumofStrYDir']*phiT_j**2,
+            's': self.JSP['s']*units.mm,
+            'phiT': phiT_j,
+            'cv': self.JSP['Cover']*units.mm,
+            'rhoLong': AsLongj/(self.JSP['h']*self.JSP['b']),
+            'phiL': phiLj
+        }
+        zzI_props = {
+            'fcr': (self.ISP['fc0']**0.5)/3*units.MPa,
+            'fc': self.ISP['fc0']*units.MPa,
+            'fyV': self.ISP['fyw']*units.MPa,
+            'fyL': self.ISP['fy']*units.MPa,
+            'Es': self.ISP['Es']*units.MPa,
+            'Ec': self.ISP['Ec']*units.MPa,
+            'h': self.ISP['b']*units.mm,  # Shear in Z-Z direction
+            'b': self.ISP['h']*units.mm,
+            'NLoad': self.IND['NLoad']*units.kN,
+            'Ls': Ls,
+            'Asv': 0.25*self.ISP['NumofStrZDir']*phiT_i**2,
+            's': self.ISP['s']*units.mm,
+            'phiT': phiT_i,
+            'cv': self.ISP['Cover']*units.mm,
+            'rhoLong': AsLongi/(self.ISP['h']*self.ISP['b']),
+            'phiL': phiLi
+        }
+        zzJ_props = {
+            'fcr': (self.JSP['fc0']**0.5)/3*units.MPa,
+            'fc': self.JSP['fc0']*units.MPa,
+            'fyV': self.JSP['fyw']*units.MPa,
+            'fyL': self.JSP['fy']*units.MPa,
+            'Es': self.JSP['Es']*units.MPa,
+            'Ec': self.JSP['Ec']*units.MPa,
+            'h': self.JSP['h']*units.mm,  # Shear in Z-Z direction
+            'b': self.JSP['b']*units.mm,
+            'NLoad': self.JND['NLoad']*units.kN,
+            'Ls': Ls,
+            'Asv': 0.25*self.JSP['NumofStrZDir']*phiT_j**2,
+            's': self.JSP['s']*units.mm,
+            'phiT': phiT_j,
+            'cv': self.JSP['Cover']*units.mm,
+            'rhoLong': AsLongj/(self.JSP['h']*self.JSP['b']),
+            'phiL': phiLj
+        }
+        
+        pVyyI, pShryyI = compute_shear_envelopes(yyI_props)
+        pVyyJ, pShryyJ = compute_shear_envelopes(yyJ_props)
+        pVzzI, pShrzzI = compute_shear_envelopes(zzI_props)
+        pVzzJ, pShrzzJ = compute_shear_envelopes(zzJ_props)
+        nVyyI = -pVyyI
+        nShryyI = -pShryyI
+        nVyyJ = -pVyyJ
+        nShryyJ = -pShryyJ
+        nVzzI = -pVzzI
+        nShrzzI = -pShrzzI
+        nVzzJ = -pVzzJ
+        nShrzzJ = -pShrzzJ
+
+
+        # Ratio of maximum deformation at which reloading begins
+        # Pos_env. Neg_env.
+        rDispV = [0.4, 0.4]
+        # Ratio of envelope force (corresponding to maximum deformation) 
+        # at which reloading begins
+        # Pos_env. Neg_env.
+        rForceV = [0.2, 0.2]
+        # Ratio of monotonic strength developed upon unloading
+        # Pos_env. Neg_env.
+        uForceV = [0.0, 0.0]
+        # gammaK1 gammaK2 gammaK3 gammaK4 gammaKLimit
+        gammaKV = [0.0, 0.0, 0.0, 0.0, 0.0]
+        # gammaD1 gammaD2 gammaD3 gammaD4 gammaDLimit
+        gammaDV = [0.0, 0.0, 0.0, 0.0, 0.0]
+        # gammaF1 gammaF2 gammaF3 gammaF4 gammaFLimit
+        gammaFV = [0.0, 0.0, 0.0, 0.0, 0.0]
+        gammaEV = 0.0
+        damV = "energy"
+        UniaxialPinchingFun(self.hingeShTagyyI,
+                            pVyyI, nVyyI,  # Pos and Negative env stresses
+                            pShryyI, nShryyI,  # Pos and Negative env strains
+                            rDispV, rForceV, uForceV,
+                            gammaKV, gammaDV, gammaFV, gammaEV,
+                            damV)
+        UniaxialPinchingFun(self.hingeShTagzzI,
+                            pVzzI, nVzzI,  # Pos and Neg env stresses
+                            pShrzzI, nShrzzI,  # Pos and Neg env strains
+                            rDispV, rForceV, uForceV,
+                            gammaKV, gammaDV, gammaFV, gammaEV,
+                            damV)
+        UniaxialPinchingFun(self.hingeShTagyyJ,
+                            pVyyJ, nVyyJ,  # Pos and Neg env stresses
+                            pShryyJ, nShryyJ,  # Pos and Neg env strains
+                            rDispV, rForceV, uForceV,
+                            gammaKV, gammaDV, gammaFV, gammaEV,
+                            damV)
+        UniaxialPinchingFun(self.hingeShTagzzJ,
+                            pVzzJ, nVzzJ,  # Pos and Neg env stresses
+                            pShrzzJ, nShrzzJ,  # Pos and Neg env strains
+                            rDispV, rForceV, uForceV,
+                            gammaKV, gammaDV, gammaFV, gammaEV,
+                            damV)
 
     def _assemble_section(self):
         # Internal elastic section tag
@@ -966,21 +1321,32 @@ class BWH_Frame:
         IyyJ = hj*(bj**3)/12
         EIyyJ = IyyJ * Ec
 
-        # ! ONLY THE POSSITIVE YEILD MOMENT BEING USED
-        KIZ = self.MCOutsI['MIdealPZ'][1] / self.MCOutsI['CurvIdealPZ'][1]
-        KJZ = self.MCOutsJ['MIdealPZ'][1] / self.MCOutsJ['CurvIdealPZ'][1]
+        KIPZ = self.MCOutsI['InitStiffPZ']
+        KINZ = self.MCOutsI['InitStiffNZ']
+        KJPZ = self.MCOutsJ['InitStiffPZ']
+        KJNZ = self.MCOutsJ['InitStiffNZ']
 
-        KIY = self.MCOutsI['MIdealPY'][1] / self.MCOutsI['CurvIdealPY'][1]
-        KJY = self.MCOutsJ['MIdealPY'][1] / self.MCOutsJ['CurvIdealPY'][1]
+        KIPY = self.MCOutsI['InitStiffPY']
+        KINY = self.MCOutsI['InitStiffNY']
+        KJPY = self.MCOutsJ['InitStiffPY']
+        KJNY = self.MCOutsJ['InitStiffNY']
+        # KIZ = self.MCOutsI['MIdealPZ'][1] / self.MCOutsI['CurvIdealPZ'][1]
+        # KJZ = self.MCOutsJ['MIdealPZ'][1] / self.MCOutsJ['CurvIdealPZ'][1]
 
-        EIrZI = KIZ/EIzzI
-        EIrZJ = KJZ/EIzzJ
+        # KIY = self.MCOutsI['MIdealPY'][1] / self.MCOutsI['CurvIdealPY'][1]
+        # KJY = self.MCOutsJ['MIdealPY'][1] / self.MCOutsJ['CurvIdealPY'][1]
+        EIrPZI = KIPZ/EIzzI
+        EIrNZI = KINZ/EIzzI
+        EIrPZJ = KJPZ/EIzzJ
+        EIrNZJ = KJNZ/EIzzJ
 
-        EIrYI = KIY/EIyyI
-        EIrYJ = KJY/EIyyJ
+        EIrPYI = KIPY/EIyyI
+        EIrNYI = KINY/EIyyI
+        EIrPYJ = KJPY/EIyyJ
+        EIrNYJ = KJNY/EIyyJ
 
-        EIrzz = max(EIrZI, EIrZJ)
-        EIryy = max(EIrYI, EIrYJ)
+        EIrzz = min(1, max(EIrPZI, EIrPZJ, EIrNZI, EIrNZJ))
+        EIryy = min(1, max(EIrPYI, EIrPYJ, EIrNYI, EIrNYJ))
 
         IzzeI = EIrzz*IzzI
         IzzeJ = EIrzz*IzzJ
@@ -1008,7 +1374,7 @@ class BWH_Frame:
         ops.section('Uniaxial', fTagzzJ, self.hingeMTagzzJ, 'Mz')
 
         # Aggregate end sections
-        if self.SF == 1:  # If shear hinge exists
+        if self.SF != 0 and self.FDir == 3:  # If shear hinge exists
             # Aggregate Vyy, Vzz and Myy behaviour to Mzz behaviour
             Imats = [self.RigidMatTag, 'P',
                      self.RigidMatTag, 'T',
